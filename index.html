@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Collection Display</title>
+</head>
+<body>
+    <h1>Data Being Sent to Server by 822.js</h1>
+    
+    <div id="output">
+        <h2>Captured Data:</h2>
+        <div id="data-container"></div>
+    </div>
+
+    <script>
+        // Store all captured data
+        const capturedData = {
+            fetchRequests: [],
+            xhrRequests: [],
+            sessionStorage: {},
+            localStorage: {},
+            collectedInfo: {}
+        };
+
+        // Intercept fetch API
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const [url, options] = args;
+            
+            // Capture the request
+            const requestData = {
+                timestamp: new Date().toISOString(),
+                url: url,
+                method: options?.method || 'GET',
+                headers: options?.headers || {},
+                body: options?.body || null
+            };
+            
+            capturedData.fetchRequests.push(requestData);
+            displayData();
+            
+            // Continue with original fetch
+            return originalFetch.apply(this, args).then(response => {
+                return response;
+            });
+        };
+
+        // Intercept XMLHttpRequest
+        const originalXHROpen = XMLHttpRequest.prototype.open;
+        const originalXHRSend = XMLHttpRequest.prototype.send;
+        
+        XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+            this._capturedMethod = method;
+            this._capturedUrl = url;
+            return originalXHROpen.apply(this, [method, url, ...rest]);
+        };
+        
+        XMLHttpRequest.prototype.send = function(body) {
+            const requestData = {
+                timestamp: new Date().toISOString(),
+                url: this._capturedUrl,
+                method: this._capturedMethod,
+                body: body
+            };
+            
+            capturedData.xhrRequests.push(requestData);
+            displayData();
+            
+            return originalXHRSend.apply(this, arguments);
+        };
+
+        // Intercept sessionStorage and localStorage
+        const originalSetItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function(key, value) {
+            if (this === sessionStorage) {
+                capturedData.sessionStorage[key] = value;
+                displayData();
+            } else if (this === localStorage) {
+                capturedData.localStorage[key] = value;
+                displayData();
+            }
+            return originalSetItem.apply(this, arguments);
+        };
+        
+        // Intercept Image requests (tracking pixels)
+        const originalImage = window.Image;
+        window.Image = function() {
+            const img = new originalImage();
+            const originalSrcSetter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
+            Object.defineProperty(img, 'src', {
+                set: function(value) {
+                    capturedData.fetchRequests.push({
+                        timestamp: new Date().toISOString(),
+                        url: value,
+                        method: 'GET (Image)',
+                        type: 'tracking-pixel'
+                    });
+                    displayData();
+                    return originalSrcSetter.call(this, value);
+                }
+            });
+            return img;
+        };
+        
+        // Intercept navigator.sendBeacon
+        if (navigator.sendBeacon) {
+            const originalSendBeacon = navigator.sendBeacon.bind(navigator);
+            navigator.sendBeacon = function(url, data) {
+                capturedData.fetchRequests.push({
+                    timestamp: new Date().toISOString(),
+                    url: url,
+                    method: 'POST (sendBeacon)',
+                    body: data,
+                    type: 'beacon'
+                });
+                displayData();
+                return originalSendBeacon(url, data);
+            };
+        }
+
+        // Collect browser information
+        function collectBrowserInfo() {
+            const info = {
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                language: navigator.language,
+                languages: navigator.languages,
+                hardwareConcurrency: navigator.hardwareConcurrency,
+                deviceMemory: navigator.deviceMemory,
+                maxTouchPoints: navigator.maxTouchPoints,
+                vendor: navigator.vendor,
+                product: navigator.product,
+                productSub: navigator.productSub,
+                appVersion: navigator.appVersion,
+                appName: navigator.appName,
+                cookieEnabled: navigator.cookieEnabled,
+                doNotTrack: navigator.doNotTrack,
+                onLine: navigator.onLine,
+                
+                screen: {
+                    width: screen.width,
+                    height: screen.height,
+                    availWidth: screen.availWidth,
+                    availHeight: screen.availHeight,
+                    colorDepth: screen.colorDepth,
+                    pixelDepth: screen.pixelDepth,
+                    orientation: screen.orientation?.type
+                },
+                
+                window: {
+                    innerWidth: window.innerWidth,
+                    innerHeight: window.innerHeight,
+                    outerWidth: window.outerWidth,
+                    outerHeight: window.outerHeight,
+                    devicePixelRatio: window.devicePixelRatio
+                },
+                
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                timezoneOffset: new Date().getTimezoneOffset(),
+                
+                performance: {
+                    memory: performance.memory ? {
+                        jsHeapSizeLimit: performance.memory.jsHeapSizeLimit,
+                        totalJSHeapSize: performance.memory.totalJSHeapSize,
+                        usedJSHeapSize: performance.memory.usedJSHeapSize
+                    } : null,
+                    timeOrigin: performance.timeOrigin,
+                    timing: performance.timing ? {
+                        navigationStart: performance.timing.navigationStart,
+                        loadEventEnd: performance.timing.loadEventEnd,
+                        domContentLoadedEventEnd: performance.timing.domContentLoadedEventEnd
+                    } : null
+                },
+                
+                // Connection info
+                connection: navigator.connection ? {
+                    effectiveType: navigator.connection.effectiveType,
+                    downlink: navigator.connection.downlink,
+                    rtt: navigator.connection.rtt,
+                    saveData: navigator.connection.saveData
+                } : null,
+                
+                // Plugins
+                plugins: Array.from(navigator.plugins || []).map(p => ({
+                    name: p.name,
+                    description: p.description,
+                    filename: p.filename
+                })),
+                
+                // Mime types
+                mimeTypes: Array.from(navigator.mimeTypes || []).map(m => ({
+                    type: m.type,
+                    description: m.description,
+                    suffixes: m.suffixes
+                })),
+                
+                // Cookies
+                cookies: document.cookie,
+                
+                // Referrer
+                referrer: document.referrer,
+                
+                // Document properties
+                documentProperties: {
+                    title: document.title,
+                    characterSet: document.characterSet,
+                    readyState: document.readyState,
+                    visibilityState: document.visibilityState,
+                    hidden: document.hidden
+                },
+                
+                // Headless browser detection
+                headlessDetection: {
+                    webdriver: navigator.webdriver,
+                    chrome: !!window.chrome,
+                    notification: !!window.Notification,
+                    permissions: !!navigator.permissions
+                },
+                
+                // Additional APIs availability
+                apiAvailability: {
+                    vibration: !!navigator.vibrate,
+                    clipboard: !!navigator.clipboard,
+                    serviceWorker: !!navigator.serviceWorker,
+                    bluetooth: !!navigator.bluetooth,
+                    usb: !!navigator.usb,
+                    credentials: !!navigator.credentials,
+                    geolocation: !!navigator.geolocation,
+                    mediaDevices: !!navigator.mediaDevices,
+                    getBattery: !!navigator.getBattery,
+                    gamepad: !!navigator.getGamepads
+                }
+            };
+            
+            // Canvas fingerprint
+            try {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = 200;
+                canvas.height = 50;
+                ctx.textBaseline = 'top';
+                ctx.font = '14px Arial';
+                ctx.fillText('Canvas fingerprint test', 2, 2);
+                info.canvasFingerprint = canvas.toDataURL().substring(0, 100) + '...';
+            } catch (e) {
+                info.canvasFingerprint = 'Error: ' + e.message;
+            }
+            
+            // WebGL fingerprint
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (gl) {
+                    info.webgl = {
+                        vendor: gl.getParameter(gl.VENDOR),
+                        renderer: gl.getParameter(gl.RENDERER),
+                        version: gl.getParameter(gl.VERSION),
+                        shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION)
+                    };
+                }
+            } catch (e) {
+                info.webgl = 'Error: ' + e.message;
+            }
+            
+            // Audio context fingerprint
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const analyser = audioCtx.createAnalyser();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.connect(analyser);
+                analyser.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                info.audioContext = {
+                    sampleRate: audioCtx.sampleRate,
+                    state: audioCtx.state,
+                    maxChannelCount: audioCtx.destination.maxChannelCount,
+                    numberOfInputs: audioCtx.destination.numberOfInputs,
+                    numberOfOutputs: audioCtx.destination.numberOfOutputs,
+                    channelCount: audioCtx.destination.channelCount
+                };
+                
+                audioCtx.close();
+            } catch (e) {
+                info.audioContext = 'Error: ' + e.message;
+            }
+            
+            // Battery API
+            if (navigator.getBattery) {
+                navigator.getBattery().then(battery => {
+                    info.battery = {
+                        charging: battery.charging,
+                        level: battery.level,
+                        chargingTime: battery.chargingTime,
+                        dischargingTime: battery.dischargingTime
+                    };
+                    capturedData.collectedInfo = info;
+                    displayData();
+                });
+            }
+            
+            // Geolocation
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    position => {
+                        info.geolocation = {
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            accuracy: position.coords.accuracy,
+                            altitude: position.coords.altitude,
+                            altitudeAccuracy: position.coords.altitudeAccuracy,
+                            heading: position.coords.heading,
+                            speed: position.coords.speed
+                        };
+                        capturedData.collectedInfo = info;
+                        displayData();
+                    },
+                    error => {
+                        info.geolocation = 'Error: ' + error.message;
+                        capturedData.collectedInfo = info;
+                        displayData();
+                    }
+                );
+            }
+            
+            // Fonts detection
+            const baseFonts = ['monospace', 'sans-serif', 'serif'];
+            const testFonts = ['Arial', 'Verdana', 'Times New Roman', 'Courier New', 'Georgia', 'Palatino', 'Garamond', 'Comic Sans MS', 'Trebuchet MS', 'Impact'];
+            const detectedFonts = [];
+            
+            const testString = 'mmmmmmmmmmlli';
+            const testSize = '72px';
+            
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            const baseFontWidths = {};
+            baseFonts.forEach(baseFont => {
+                ctx.font = testSize + ' ' + baseFont;
+                baseFontWidths[baseFont] = ctx.measureText(testString).width;
+            });
+            
+            testFonts.forEach(font => {
+                let detected = false;
+                baseFonts.forEach(baseFont => {
+                    ctx.font = testSize + ' ' + font + ', ' + baseFont;
+                    const width = ctx.measureText(testString).width;
+                    if (width !== baseFontWidths[baseFont]) {
+                        detected = true;
+                    }
+                });
+                if (detected) {
+                    detectedFonts.push(font);
+                }
+            });
+            
+            info.detectedFonts = detectedFonts;
+            
+            // WebRTC local IP detection
+            try {
+                const pc = new RTCPeerConnection({iceServers: []});
+                pc.createDataChannel('');
+                pc.createOffer().then(offer => pc.setLocalDescription(offer));
+                pc.onicecandidate = function(ice) {
+                    if (ice && ice.candidate && ice.candidate.candidate) {
+                        const ipRegex = /([0-9]{1,3}(\.[0-9]{1,3}){3}|[a-f0-9]{1,4}(:[a-f0-9]{1,4}){7})/;
+                        const ipMatch = ipRegex.exec(ice.candidate.candidate);
+                        if (ipMatch) {
+                            info.webRTC_LocalIP = ipMatch[1];
+                            capturedData.collectedInfo = info;
+                            displayData();
+                            pc.close();
+                        }
+                    }
+                };
+            } catch (e) {
+                info.webRTC_LocalIP = 'Error: ' + e.message;
+            }
+            
+            // Media devices enumeration
+            if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                navigator.mediaDevices.enumerateDevices().then(devices => {
+                    info.mediaDevices = devices.map(device => ({
+                        kind: device.kind,
+                        label: device.label,
+                        deviceId: device.deviceId,
+                        groupId: device.groupId
+                    }));
+                    capturedData.collectedInfo = info;
+                    displayData();
+                }).catch(e => {
+                    info.mediaDevices = 'Error: ' + e.message;
+                    capturedData.collectedInfo = info;
+                    displayData();
+                });
+            }
+            
+            // Permissions query
+            const permissionsToCheck = ['geolocation', 'notifications', 'microphone', 'camera'];
+            info.permissions = {};
+            permissionsToCheck.forEach(perm => {
+                if (navigator.permissions && navigator.permissions.query) {
+                    navigator.permissions.query({name: perm}).then(result => {
+                        info.permissions[perm] = result.state;
+                        capturedData.collectedInfo = info;
+                        displayData();
+                    }).catch(e => {
+                        info.permissions[perm] = 'Error: ' + e.message;
+                    });
+                }
+            });
+            
+            // Speech synthesis voices (another fingerprint vector)
+            if (window.speechSynthesis) {
+                const loadVoices = () => {
+                    const voices = window.speechSynthesis.getVoices();
+                    if (voices.length > 0) {
+                        info.speechVoices = voices.map(v => ({
+                            name: v.name,
+                            lang: v.lang,
+                            localService: v.localService
+                        }));
+                        capturedData.collectedInfo = info;
+                        displayData();
+                    }
+                };
+                loadVoices();
+                window.speechSynthesis.onvoiceschanged = loadVoices;
+            }
+            
+            capturedData.collectedInfo = info;
+            displayData();
+        }
+
+        // Display all captured data
+        function displayData() {
+            const container = document.getElementById('data-container');
+            let html = '';
+            
+            // Display collected browser info
+            if (Object.keys(capturedData.collectedInfo).length > 0) {
+                html += '<h3>Browser & Device Information:</h3>';
+                html += '<pre>' + JSON.stringify(capturedData.collectedInfo, null, 2) + '</pre>';
+            }
+            
+            // Display fetch requests
+            if (capturedData.fetchRequests.length > 0) {
+                html += '<h3>Fetch Requests (' + capturedData.fetchRequests.length + '):</h3>';
+                capturedData.fetchRequests.forEach((req, idx) => {
+                    html += '<h4>Request #' + (idx + 1) + ':</h4>';
+                    html += '<pre>' + JSON.stringify(req, null, 2) + '</pre>';
+                });
+            }
+            
+            // Display XHR requests
+            if (capturedData.xhrRequests.length > 0) {
+                html += '<h3>XMLHttpRequest Requests (' + capturedData.xhrRequests.length + '):</h3>';
+                capturedData.xhrRequests.forEach((req, idx) => {
+                    html += '<h4>Request #' + (idx + 1) + ':</h4>';
+                    html += '<pre>' + JSON.stringify(req, null, 2) + '</pre>';
+                });
+            }
+            
+            // Display sessionStorage data
+            if (Object.keys(capturedData.sessionStorage).length > 0) {
+                html += '<h3>SessionStorage Data:</h3>';
+                html += '<pre>' + JSON.stringify(capturedData.sessionStorage, null, 2) + '</pre>';
+            }
+            
+            // Display localStorage data
+            if (Object.keys(capturedData.localStorage).length > 0) {
+                html += '<h3>LocalStorage Data:</h3>';
+                html += '<pre>' + JSON.stringify(capturedData.localStorage, null, 2) + '</pre>';
+            }
+            
+            container.innerHTML = html;
+        }
+
+        // Collect browser info on load
+        collectBrowserInfo();
+    </script>
+    
+    <!-- Load 822.js after interception setup -->
+    <script src="822.js"></script>
+</body>
+</html>
